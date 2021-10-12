@@ -1,12 +1,9 @@
-from .utils import update_local_futures_info
-from typing import Dict, List, Union
+from ..common import get_quote_history as get_quote_history_for_futures
+from ..utils import process_dataframe_and_series
+from ..common import get_realtime_quotes_by_fs
+from typing import List, Union
 import pandas as pd
-import requests
-from urllib.parse import urlencode
-import multitasking
-from tqdm import tqdm
-from .config import EastmoneyHeaders, EastmoneyKlines
-from retry import retry
+from ..common.config import FS_DICT
 
 
 def get_futures_base_info() -> pd.DataFrame:
@@ -16,196 +13,37 @@ def get_futures_base_info() -> pd.DataFrame:
     Returns
     -------
     DataFrame
-        四个交易所全部期货基本信息
+        四个交易所全部期货一些基本信息
 
     Examples
     --------
     >>> import efinance as ef
     >>> ef.futures.get_futures_base_info()
-        期货代码      期货名称       secid 归属交易所
-    0       ZCM     动力煤主力     115.ZCM   郑商所
-    1     ZC109    动力煤109   115.ZC109   郑商所
-    2       bum    石油沥青主力     113.bum   上期所
-    3    bu2109  石油沥青2109  113.bu2109   上期所
-    4    bu2203  石油沥青2203  113.bu2203   上期所
-    ..      ...       ...         ...   ...
-    781   p2204   棕榈油2204   114.p2204   大商所
-    782   p2203   棕榈油2203   114.p2203   大商所
-    783   p2110   棕榈油2110   114.p2110   大商所
-    784      pm     棕榈油主力      114.pm   大商所
-    785   p2109   棕榈油2109   114.p2109   大商所
-    [786 rows x 4 columns]
-    """
+        期货代码      期货名称        行情ID       市场类型
+    0       ZCM     动力煤主力     115.ZCM        郑商所
+    1     ZC201    动力煤201   115.ZC201        郑商所
+    2        jm      焦炭主力      114.jm        大商所
+    3     j2201    焦炭2201   114.j2201        大商所
+    4       jmm      焦煤主力     114.jmm        大商所
+    ..      ...       ...         ...        ...
+    846  jm2109    焦煤2109  114.jm2109        大商所
+    847  071108    IH2108    8.071108        中金所
+    848  070131   IH次主力合约    8.070131        中金所
+    849  070120    IH当月连续     8.07012        中金所
+    850  lu2109  低硫燃油2109  142.lu2109  上海能源期货交易所
 
-    params = (
-        ('np', '1'),
-        ('fltt', '2'),
-        ('invt', '2'),
-        ('fields', 'f1,f2,f3,f4,f12,f13,f14'),
-        ('pn', '1'),
-        ('pz', '300000'),
-        ('fid', 'f3'),
-        ('po', '1'),
-        ('fs', 'm:113,m:114,m:115,m:8'),
-        ('forcect', '1'),
-    )
-    rows = []
-    cfg = {
-        113: '上期所',
-        114: '大商所',
-        115: '郑商所',
-        8: '中金所'
-    }
-    response = requests.get(
-        'https://push2.eastmoney.com/api/qt/clist/get', headers=EastmoneyHeaders, params=params)
-    for item in response.json()['data']['diff']:
-        code = item['f12']
-        name = item['f14']
-        secid = str(item['f13'])+'.'+code
-        belong = cfg[item['f13']]
-        row = [code, name, secid, belong]
-        rows.append(row)
-    columns = ['期货代码', '期货名称', 'secid', '归属交易所']
-    df = pd.DataFrame(rows, columns=columns)
+    Notes
+    -----
+    这里的 行情ID 主要作用是为使用函数 ``efinance.futures.get_quote_history`` 
+    获取期货行情信息提供参数
+    """
+    columns = ['期货代码', '期货名称', '行情ID', '市场类型']
+    df = get_realtime_quotes()
+    df = df[columns]
     return df
 
 
-def get_quote_history_single(secid: str,
-                             beg: str = '19000101',
-                             end: str = '20500101',
-                             klt: int = 101,
-                             fqt: int = 1) -> pd.DataFrame:
-    """
-    获取期货历史行情信息
-
-    Parameters
-    ----------
-    secid : str
-        根据 efinance.Futures.get_futures_base_info 函数获取
-    beg : str, optional
-        开始日期，默认为 '19000101'，表示 1900年1月1日
-    end : str, optional
-        结束日期，默认为 '20500101'，表示 2050年1月1日
-    klt : int, optional
-        行情之间的时间间隔
-        可选示例如下
-            klt : 1 1 分钟
-            klt : 5 5 分钟
-            klt : 101 日
-            klt : 102 周
-    fqt : int, optional
-        复权方式，默认为 1
-        可选示例如下
-            不复权 : 0
-            前复权 : 1
-            后复权 : 2 
-
-    Returns
-    -------
-    DataFrame
-        指定日期区间的期货历史行情信息
-    """
-
-    fields = list(EastmoneyKlines.keys())
-    columns = list(EastmoneyKlines.values())
-    fields2 = ",".join(fields)
-
-    params = (
-        ('fields1', 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13'),
-        ('fields2', fields2),
-        ('beg', beg),
-        ('end', end),
-        ('rtntype', '6'),
-        ('secid', secid),
-        ('klt', f'{klt}'),
-        ('fqt', f'{fqt}'),
-    )
-    base_url = 'https://push2his.eastmoney.com/api/qt/stock/kline/get'
-    url = base_url+'?'+urlencode(params)
-    json_response = requests.get(
-        url, headers=EastmoneyHeaders).json()
-
-    data = json_response['data']
-    if data is None:
-        print(secid, '无数据')
-        return None
-    # code = data['code']
-    # name = data['name']
-    klines = data['klines']
-
-    rows = []
-    for _kline in klines:
-
-        kline = _kline.split(',')
-        rows.append(kline)
-
-    df = pd.DataFrame(rows, columns=columns)
-
-    return df
-
-
-def get_quote_history_multi(secids: List[str],
-                            beg: str = '19000101',
-                            end: str = '20500101',
-                            klt: int = 101,
-                            fqt: int = 1,
-                            tries: int = 3) -> Dict[str, pd.DataFrame]:
-    """
-    获取多个期货历史行情信息
-
-    Parameters
-    ----------
-    secids : List[str]
-        多个 期货 secid 列表
-    beg : str, optional
-        开始日期，默认为 '19000101'，表示 1900年1月1日
-    end : str, optional
-        结束日期，默认为 '20500101'，表示 2050年1月1日
-    klt : int, optional
-        行情之间的时间间隔
-        可选示例如下
-            klt : 1 1 分钟
-            klt : 5 5 分钟
-            klt : 101 日
-            klt : 102 周
-    fqt : int, optional
-        复权方式，默认为 1
-        可选示例如下
-            不复权 : 0
-            前复权 : 1
-            后复权 : 2 
-    tries : int, optional
-        单个线程出错时重试次数, 默认为  3
-
-    Returns
-    -------
-    Dict[str, pd.DataFrame]
-        以 期货 secid 为 key，以 DataFrame 为值的 dict
-    """
-
-    dfs: Dict[str, pd.DataFrame] = {}
-    total = len(secids)
-    if total != 0:
-        update_local_futures_info()
-
-    @multitasking.task
-    @retry(tries=3, delay=1)
-    def start(stock_code: str):
-        _df = get_quote_history_single(
-            stock_code, beg=beg, end=end, klt=klt, fqt=fqt)
-        dfs[stock_code] = _df
-        pbar.update(1)
-        pbar.set_description_str(f'Processing: {stock_code}')
-
-    pbar = tqdm(total=total)
-    for stock_code in secids:
-        start(stock_code)
-    multitasking.wait_for_tasks()
-    pbar.close()
-    return dfs
-
-
-def get_quote_history(secids: Union[str, List[str]],
+def get_quote_history(quote_ids: Union[str, List[str]],
                       beg: str = '19000101',
                       end: str = '20500101',
                       klt: int = 101,
@@ -215,97 +53,144 @@ def get_quote_history(secids: Union[str, List[str]],
 
     Parameters
     ----------
-    secids : Union[str, List[str]]
-        一个期货 secid，或者多个期货 secid构成的列表
+    quote_ids : Union[str, List[str]]
+        一个期货 行情ID，或者多个期货 行情ID 构成的列表
     beg : str, optional
-        开始日期，默认为 '19000101'，表示 1900年1月1日
+        开始日期，默认为 ``'19000101'`` ，表示 1900年1月1日
     end : str, optional
-        结束日期，默认为 '20500101'，表示 2050年1月1日
+        结束日期，默认为 ``'20500101'`` ，表示 2050年1月1日
     klt : int, optional
-        行情之间的时间间隔
-        可选示例如下
-            klt : 1 1 分钟
-            klt : 5 5 分钟
-            klt : 101 日
-            klt : 102 周
+        行情之间的时间间隔，默认为 ``101`` ，可选示例如下
+
+        - ``1`` : 分钟
+        - ``5`` : 5 分钟
+        - ``15`` : 15 分钟
+        - ``30`` : 30 分钟
+        - ``60`` : 60 分钟
+        - ``101`` : 日
+        - ``102`` : 周
+        - ``103`` : 月
+
     fqt : int, optional
-        复权方式，默认为 1
-        可选示例如下
-            不复权 : 0
-            前复权 : 1
-            后复权 : 2 
-    tries : int, optional
-        单个线程出错时重试次数, 默认为  3
+        复权方式，默认为 ``1`` ，可选示例如下
+
+        - ``0`` : 不复权
+        - ``1`` : 前复权
+        - ``2`` : 后复权
 
     Returns
     -------
-    Dict[str, DataFrame]
-        以 期货 secid 为 key，以 DataFrame 为值的 dict
+    Union[DataFrame, Dict[str, DataFrame]]
+        期货的 K 线数据
+
+        - ``DataFrame`` : 当 ``secids`` 是 ``str`` 时
+        - ``Dict[str, DataFrame]`` : 当 ``quote_ids`` 是 ``List[str]`` 时
+
+    Examples
+    --------
+    >>> import efinance as ef
+    >>> # 获取全部期货行情ID列表
+    >>> quote_ids = ef.futures.get_realtime_quotes()['行情ID']
+    >>> # 指定单个期货的行情ID(以上面获得到的行情ID列表为例)
+    >>> quote_id = quote_ids[0]
+    >>> # 查看第一个行情ID
+    >>> quote_ids[0]
+    '115.ZCM'
+    >>> # 获取第行情ID为第一个的期货日 K 线数据
+    >>> ef.futures.get_quote_history(quote_id)
+        期货代码   期货名称          日期     开盘     收盘     最高     最低    成交量           成交额    振幅   涨跌幅   涨跌额  换手率
+    0     ZCM  动力煤主力  2015-05-18  440.0  437.6  440.2  437.6     64  2.806300e+06  0.00  0.00   0.0  0.0
+    1     ZCM  动力煤主力  2015-05-19  436.0  437.0  437.6  436.0      6  2.621000e+05  0.36 -0.32  -1.4  0.0
+    2     ZCM  动力煤主力  2015-05-20  436.8  435.8  437.0  434.8      8  3.487500e+05  0.50 -0.23  -1.0  0.0
+    3     ZCM  动力煤主力  2015-05-21  438.0  443.2  446.8  437.8     37  1.631850e+06  2.06  1.65   7.2  0.0
+    4     ZCM  动力煤主力  2015-05-22  439.2  441.4  443.8  439.2     34  1.502500e+06  1.04  0.09   0.4  0.0
+    ...   ...    ...         ...    ...    ...    ...    ...    ...           ...   ...   ...   ...  ...
+    1524  ZCM  动力煤主力  2021-08-17  755.0  770.8  776.0  750.6  82373  6.288355e+09  3.25 -1.26  -9.8  0.0
+    1525  ZCM  动力煤主力  2021-08-18  770.8  776.8  785.8  766.0  77392  6.016454e+09  2.59  1.76  13.4  0.0
+    1526  ZCM  动力煤主力  2021-08-19  776.8  777.6  798.0  764.6  97229  7.597474e+09  4.30  0.03   0.2  0.0
+    1527  ZCM  动力煤主力  2021-08-20  778.0  793.0  795.0  775.2  70549  5.553617e+09  2.53  1.48  11.6  0.0
+    1528  ZCM  动力煤主力  2021-08-23  796.8  836.6  843.8  796.8  82954  6.850341e+09  5.97  6.28  49.4  0.0
+
+    >>> # 指定多个期货的 行情ID
+    >>> quote_ids = ['115.ZCM','115.ZC109']
+    >>> futures_df = ef.futures.get_quote_history(quote_ids)
+    >>> type(futures_df)
+    <class 'dict'>
+    >>> futures_df.keys()
+    dict_keys(['115.ZC109', '115.ZCM'])
+    >>> futures_df['115.ZCM']
+        期货名称 期货代码          日期     开盘     收盘     最高     最低    成交量           成交额    振幅   涨跌幅   涨跌额  换手率
+    0     动力煤主力  ZCM  2015-05-18  440.0  437.6  440.2  437.6     64  2.806300e+06  0.00  0.00   0.0  0.0
+    1     动力煤主力  ZCM  2015-05-19  436.0  437.0  437.6  436.0      6  2.621000e+05  0.36 -0.32  -1.4  0.0
+    2     动力煤主力  ZCM  2015-05-20  436.8  435.8  437.0  434.8      8  3.487500e+05  0.50 -0.23  -1.0  0.0
+    3     动力煤主力  ZCM  2015-05-21  438.0  443.2  446.8  437.8     37  1.631850e+06  2.06  1.65   7.2  0.0
+    4     动力煤主力  ZCM  2015-05-22  439.2  441.4  443.8  439.2     34  1.502500e+06  1.04  0.09   0.4  0.0
+    ...     ...  ...         ...    ...    ...    ...    ...    ...           ...   ...   ...   ...  ...
+    1524  动力煤主力  ZCM  2021-08-17  755.0  770.8  776.0  750.6  82373  6.288355e+09  3.25 -1.26  -9.8  0.0
+    1525  动力煤主力  ZCM  2021-08-18  770.8  776.8  785.8  766.0  77392  6.016454e+09  2.59  1.76  13.4  0.0
+    1526  动力煤主力  ZCM  2021-08-19  776.8  777.6  798.0  764.6  97229  7.597474e+09  4.30  0.03   0.2  0.0
+    1527  动力煤主力  ZCM  2021-08-20  778.0  793.0  795.0  775.2  70549  5.553617e+09  2.53  1.48  11.6  0.0
+    1528  动力煤主力  ZCM  2021-08-23  796.8  836.6  843.8  796.8  82954  6.850341e+09  5.97  6.28  49.4  0.0
+
+    """
+    df = get_quote_history_for_futures(quote_ids,
+                                       beg=beg,
+                                       end=end,
+                                       klt=klt,
+                                       fqt=fqt,
+                                       quote_id_mode=True)
+    if isinstance(df, pd.DataFrame):
+
+        df.rename(columns={'代码': '期货代码',
+                           '名称': '期货名称'
+                           },
+                  inplace=True)
+    elif isinstance(df, dict):
+        for stock_code in df.keys():
+            df[stock_code].rename(columns={'代码': '期货代码',
+                                           '名称': '期货名称'
+                                           },
+                                  inplace=True)
+    return df
+
+
+@process_dataframe_and_series(remove_columns_and_indexes=['市场编号'])
+def get_realtime_quotes() -> pd.DataFrame:
+    """
+    获取期货最新行情总体情况
 
     Returns
     -------
     DataFrame
+        期货市场的最新行情信息（涨跌幅、换手率等信息）
 
-    Raises
-    ------
-    TypeError
-        当 secids 不符合类型要求时
     Examples
     --------
     >>> import efinance as ef
-    >>> # 指定单个期货的 secid
-    >>> secid = '115.ZCM'
-    >>> ef.futures.get_quote_history(secid)
-        日期     开盘     收盘     最高     最低     成交量            成交额    振幅    涨跌幅    涨跌额   换手率
-    0     2015-05-18  440.0  437.6  440.2  437.6      64      2806300.0  0.00   0.00    0.0  0.00
-    1     2015-05-19  436.0  437.0  437.6  436.0       6       262100.0  0.36  -0.32   -1.4  0.00
-    2     2015-05-20  436.8  435.8  437.0  434.8       8       348750.0  0.50  -0.23   -1.0  0.00
-    3     2015-05-21  438.0  443.2  446.8  437.8      37      1631850.0  2.06   1.65    7.2  0.00
-    4     2015-05-22  439.2  441.4  443.8  439.2      34      1502500.0  1.04   0.09    0.4  0.00
-    ...          ...    ...    ...    ...    ...     ...            ...   ...    ...    ...   ...
-    1475  2021-06-08  800.2  819.2  821.0  791.0  201763  16270168320.0  3.72   1.56   12.6  0.00
-    1476  2021-06-09  822.4  818.2  832.2  816.0  193464  15925956608.0  2.01   1.46   11.8  0.00
-    1477  2021-06-10  818.0  803.4  828.4  801.2  168933  13805204736.0  3.30  -2.41  -19.8  0.00
-    1478  2021-06-11  807.0  827.2  833.0  805.8  207762  16999086848.0  3.33   1.22   10.0  0.00
-    1479  2021-06-15  847.0  849.2  853.6  830.0  140166  11827207168.0  2.88   3.79   31.0  0.00
-    [1480 rows x 11 columns]
-    >>> # 指定多个期货的 secid
-    >>> secids = ['115.ZCM','115.ZC109']
-    >>> ef.futures.get_quote_history(secids)
-    {'115.ZCM':               日期     开盘     收盘     最高     最低     成交量            成交额    振幅    涨跌幅    涨跌额   换手率
-    0     2015-05-18  440.0  437.6  440.2  437.6      64      2806300.0  0.00   0.00    0.0  0.00
-    1     2015-05-19  436.0  437.0  437.6  436.0       6       262100.0  0.36  -0.32   -1.4  0.00
-    2     2015-05-20  436.8  435.8  437.0  434.8       8       348750.0  0.50  -0.23   -1.0  0.00
-    3     2015-05-21  438.0  443.2  446.8  437.8      37      1631850.0  2.06   1.65    7.2  0.00
-    4     2015-05-22  439.2  441.4  443.8  439.2      34      1502500.0  1.04   0.09    0.4  0.00
-    ...          ...    ...    ...    ...    ...     ...            ...   ...    ...    ...   ...
-    1475  2021-06-08  800.2  819.2  821.0  791.0  201763  16270168320.0  3.72   1.56   12.6  0.00
-    1476  2021-06-09  822.4  818.2  832.2  816.0  193464  15925956608.0  2.01   1.46   11.8  0.00
-    1477  2021-06-10  818.0  803.4  828.4  801.2  168933  13805204736.0  3.30  -2.41  -19.8  0.00
-    1478  2021-06-11  807.0  827.2  833.0  805.8  207762  16999086848.0  3.33   1.22   10.0  0.00
-    1479  2021-06-15  847.0  849.2  853.6  830.0  140166  11827207168.0  2.88   3.79   31.0  0.00
-    [1480 rows x 11 columns],
-    '115.ZC109':              日期     开盘     收盘     最高     最低     成交量            成交额    振幅    涨跌幅    涨跌额   换手率
-    0    2020-09-09  551.2  551.2  551.2  551.2       2       110240.0  0.00   0.00    0.0  0.00
-    1    2020-09-10  548.6  545.0  549.8  545.0       6       328920.0  0.87  -1.12   -6.2  0.00
-    2    2020-09-11  545.0  544.2  548.4  543.0       7       381500.0  0.99  -0.73   -4.0  0.00
-    3    2020-09-14  546.0  550.4  550.4  546.0       7       384300.0  0.81   0.99    5.4  0.00
-    4    2020-09-15  549.0  551.2  551.6  549.0      14       770560.0  0.47   0.40    2.2  0.00
-    ..          ...    ...    ...    ...    ...     ...            ...   ...    ...    ...   ...
-    178  2021-06-08  800.2  819.2  821.0  791.0  201763  16270168320.0  3.72   1.56   12.6  0.00
-    179  2021-06-09  822.4  818.2  832.2  816.0  193464  15925956608.0  2.01   1.46   11.8  0.00
-    180  2021-06-10  818.0  803.4  828.4  801.2  168933  13805204736.0  3.30  -2.41  -19.8  0.00
-    181  2021-06-11  807.0  827.2  833.0  805.8  207762  16999086848.0  3.33   1.22   10.0  0.00
-    182  2021-06-15  847.0  849.2  853.6  830.0  140166  11827207168.0  2.88   3.79   31.0  0.00
-    [183 rows x 11 columns]}
-    """
+    >>> ef.futures.get_realtime_quotes()
+        期货代码      期货名称   涨跌幅     最新价      最高      最低      今开    涨跌额 换手率    量比 动态市盈率     成交量            成交额    昨日收盘     总市值 流通市值        行情ID       市场类型
+    0       ZCM     动力煤主力  6.28   836.6   843.8   796.8   796.8   49.4   -  2.82     -   82954   6850341376.0   793.0       -    -     115.ZCM        郑商所
+    1     ZC201    动力煤201  6.28   836.6   843.8   796.8   796.8   49.4   -  2.82     -   82954   6850341376.0   793.0       -    -   115.ZC201        郑商所
+    2        jm      焦炭主力  5.39  2980.0  2982.0  2833.0  2834.0  152.5   -   1.4     -  166433  48567923456.0  2830.5       -    -      114.jm        大商所
+    3     j2201    焦炭2201  5.39  2980.0  2982.0  2833.0  2834.0  152.5   -   1.4     -  166433  48567923456.0  2830.5       -    -   114.j2201        大商所
+    4       jmm      焦煤主力   5.0  2354.0  2360.0  2221.0  2221.0  112.0   -  1.42     -  238671  32924591872.0  2238.0       -    -     114.jmm        大商所
+    ..      ...       ...   ...     ...     ...     ...     ...    ...  ..   ...   ...     ...            ...     ...     ...  ...         ...        ...
+    846  jm2109    焦煤2109 -2.28  2748.0  2882.5  2688.0  2845.0  -64.0   -  1.85     -   34029   5656982528.0  2866.0       -    -  114.jm2109        大商所
+    847  071108    IH2108 -2.52  3060.0  3130.0  3043.0  3111.2  -79.0   -  0.39     -   14384  13315567616.0  3139.2  918000    -    8.071108        中金所
+    848  070131   IH次主力合约 -2.52  3060.0  3130.0  3043.0  3111.2  -79.0   -  0.57     -   14384  13315567616.0  3139.2  918000    -    8.070131        中金所
+    849  070120    IH当月连续 -2.52  3060.0  3130.0  3043.0  3111.2  -79.0   -  0.39     -   14384  13315567616.0  3139.2  918000    -    8.070120        中金所
+    850  lu2109  低硫燃油2109 -3.79  3123.0  3127.0  3121.0  3121.0 -123.0   -     -     -      22       687420.0  3143.0       -    -  142.lu2109  上海能源期货交易所
 
-    if isinstance(secids, str):
-        return get_quote_history_single(secids, beg=beg, end=end, klt=klt, fqt=fqt)
-    elif hasattr(secids, '__iter__'):
-        secids = list(secids)
-        return get_quote_history_multi(secids, beg=beg, end=end, klt=klt, fqt=fqt)
-    else:
-        raise TypeError(
-            '期货 secid 类型输入不正确！'
-        )
+    Notes
+    -----
+    如果不记得行情ID,则可以调用函数 ``efinance.futures.get_realtime_quotes`` 获取
+    接着便可以使用函数 ``efinance.futures.get_quote_history`` 
+    来获取期货 K 线数据
+
+    """
+    fs = FS_DICT['futures']
+    df = get_realtime_quotes_by_fs(fs)
+    df = df.rename(columns={'代码': '期货代码',
+                            '名称': '期货名称'
+                            })
+    return df
