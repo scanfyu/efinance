@@ -44,6 +44,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx_rtd_theme',
     'myst_parser',
+    'sphinx_copybutton'
 ]
 source_suffix = ['.rst', '.md']
 # Add any paths that contain templates here, relative to this directory.
@@ -60,4 +61,6 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = "sphinx_rtd_theme"
+# html_theme = "sphinx_rtd_theme"
+
+html_theme = "furo"

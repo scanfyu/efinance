@@ -1,5 +1,8 @@
+import json
 import calendar
-from ..utils import search_quote
+
+import numpy as np
+from ..utils import (search_quote, to_type)
 from datetime import datetime, timedelta
 from ..utils import process_dataframe_and_series
 import rich
@@ -50,7 +53,7 @@ def get_base_info_single(stock_code: str) -> pd.Series:
     fields = ",".join(EASTMONEY_STOCK_BASE_INFO_FIELDS.keys())
     secid = get_quote_id(stock_code)
     if not secid:
-        return pd.Series(index=EASTMONEY_STOCK_BASE_INFO_FIELDS.values())
+        return pd.Series(index=EASTMONEY_STOCK_BASE_INFO_FIELDS.values(), dtype='object')
     params = (
         ('ut', 'fa5fd1943c7b386f172d6893dbfba10b'),
         ('invt', '2'),
@@ -160,7 +163,8 @@ def get_quote_history(stock_codes: Union[str, List[str]],
                       beg: str = '19000101',
                       end: str = '20500101',
                       klt: int = 101,
-                      fqt: int = 1) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+                      fqt: int = 1,
+                      **kwargs) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """
     获取股票的 K 线数据
 
@@ -258,7 +262,9 @@ def get_quote_history(stock_codes: Union[str, List[str]],
                                            '名称': '股票名称'
                                            },
                                   inplace=True)
-
+        # NOTE 扩展接口 设定此关键词即返回 DataFrame 而不是 dict
+        if kwargs.get('return_df'):
+            df: pd.DataFrame = pd.concat(df, axis=0, ignore_index=True)
     return df
 
 
@@ -273,10 +279,11 @@ def get_realtime_quotes(fs: Union[str, List[str]] = None) -> pd.DataFrame:
     fs : Union[str, List[str]], optional
         行情名称或者多个行情名列表 可选值及示例如下
 
-        - ``None``  沪深A股市场行情
+        - ``None``  沪深京A股市场行情
         - ``'沪深A股'`` 沪深A股市场行情
         - ``'沪A'`` 沪市A股市场行情
         - ``'深A'`` 深市A股市场行情
+        - ``北A``   北证A股市场行情
         - ``'可转债'``  沪深可转债市场行情
         - ``'期货'``    期货市场行情
         - ``'创业板'``  创业板市场行情
@@ -1119,43 +1126,45 @@ def get_members(index_code: str) -> pd.DataFrame:
     --------
     >>> import efinance as ef
     >>> ef.stock.get_members('000300')
-        指数代码   指数名称    股票代码  股票名称
-    0    000300  沪深300  600519  贵州茅台
-    1    000300  沪深300  601398  工商银行
-    2    000300  沪深300  601939  建设银行
-    3    000300  沪深300  600036  招商银行
-    4    000300  沪深300  601857  中国石油
-    ..      ...    ...     ...   ...
-    295  000300  沪深300  688126  沪硅产业
-    296  000300  沪深300  688169  石头科技
-    297  000300  沪深300  688036  传音控股
-    298  000300  沪深300  688009  中国通号
-    299  000300  沪深300  688008  澜起科技
+        指数代码   指数名称    股票代码  股票名称  股票权重
+    0    000300  沪深300  600519  贵州茅台  4.77
+    1    000300  沪深300  601398  工商银行  3.46
+    2    000300  沪深300  601939  建设银行  3.12
+    3    000300  沪深300  600036  招商银行  2.65
+    4    000300  沪深300  601857  中国石油  2.37
+    ..      ...    ...     ...   ...   ...
+    295  000300  沪深300  688126  沪硅产业   NaN
+    296  000300  沪深300  688169  石头科技   NaN
+    297  000300  沪深300  688036  传音控股   NaN
+    298  000300  沪深300  688009  中国通号   NaN
+    299  000300  沪深300  688008  澜起科技   NaN
 
     >>> ef.stock.get_members('中证白酒')
-        指数代码  指数名称    股票代码  股票名称
-    0   399997  中证白酒  600519  贵州茅台
-    1   399997  中证白酒  000858   五粮液
-    2   399997  中证白酒  600809  山西汾酒
-    3   399997  中证白酒  000568  泸州老窖
-    4   399997  中证白酒  002304  洋河股份
-    5   399997  中证白酒  000596  古井贡酒
-    6   399997  中证白酒  000799   酒鬼酒
-    7   399997  中证白酒  600779   水井坊
-    8   399997  中证白酒  603369   今世缘
-    9   399997  中证白酒  603198  迎驾贡酒
-    10  399997  中证白酒  603589   口子窖
-    11  399997  中证白酒  000860  顺鑫农业
-    12  399997  中证白酒  600559  老白干酒
-    13  399997  中证白酒  603919   金徽酒
-    14  399997  中证白酒  600197   伊力特
-    15  399997  中证白酒  600199  金种子酒
+        指数代码  指数名称    股票代码  股票名称   股票权重
+    0   399997  中证白酒  600519  贵州茅台  49.25
+    1   399997  中证白酒  000858   五粮液  18.88
+    2   399997  中证白酒  600809  山西汾酒   8.45
+    3   399997  中证白酒  000568  泸州老窖   7.03
+    4   399997  中证白酒  002304  洋河股份   5.72
+    5   399997  中证白酒  000596  古井贡酒   2.76
+    6   399997  中证白酒  000799   酒鬼酒   1.77
+    7   399997  中证白酒  600779   水井坊   1.36
+    8   399997  中证白酒  603369   今世缘   1.26
+    9   399997  中证白酒  603198  迎驾贡酒   0.89
+    10  399997  中证白酒  603589   口子窖   0.67
+    11  399997  中证白酒  000860  顺鑫农业   0.59
+    12  399997  中证白酒  600559  老白干酒   0.44
+    13  399997  中证白酒  603919   金徽酒   0.39
+    14  399997  中证白酒  600197   伊力特   0.28
+    15  399997  中证白酒  600199  金种子酒   0.26
+
     """
     fields = {
         'IndexCode': '指数代码',
         'IndexName': '指数名称',
         'StockCode': '股票代码',
-        'StockName': '股票名称'
+        'StockName': '股票名称',
+        'MARKETCAPPCT': '股票权重'
     }
     qs = search_quote(index_code, count=10)
     df = pd.DataFrame(columns=fields.values())
@@ -1164,9 +1173,9 @@ def get_members(index_code: str) -> pd.DataFrame:
     for q in qs:
         if q.security_typeName == '指数':
             params = (
-                ('IndexCode', q.code),
+                ('IndexCode', f'{q.code}'),
                 ('pageIndex', '1'),
-                ('pageSize', '100000'),
+                ('pageSize', '10000'),
                 ('deviceid', '1234567890'),
                 ('version', '6.9.9'),
                 ('product', 'EFund'),
@@ -1174,10 +1183,17 @@ def get_members(index_code: str) -> pd.DataFrame:
                 ('ServerVersion', '6.9.9'),
             )
             url = 'https://fundztapi.eastmoney.com/FundSpecialApiNew/FundSpecialZSB30ZSCFG'
-            json_response = requests.get(url, params=params).json()
+            json_response = requests.get(
+                url,
+                params=params,
+                headers=EASTMONEY_REQUEST_HEADERS).json()
             items = json_response['Datas']
-            df = pd.DataFrame(items).rename(
+            # NOTE 这是为了跳过排在前面但无法获取成分股的指数 例如搜索 白酒 时排在前面的 980031
+            if not items:
+                continue
+            df: pd.DataFrame = pd.DataFrame(items).rename(
                 columns=fields)[fields.values()]
+            df['股票权重'] = pd.to_numeric(df['股票权重'], errors='coerce')
             return df
     return df
 
@@ -1251,3 +1267,126 @@ def get_latest_ipo_info() -> pd.DataFrame:
         return df
     df = pd.concat(dfs, ignore_index=True, axis=0)
     return df
+
+
+@retry(tries=3)
+def get_quote_snapshot(stock_code: str) -> pd.Series:
+    """
+    获取沪深市场股票最新行情快照
+
+    Parameters
+    ----------
+    stock_code : str
+        股票代码
+
+    Returns
+    -------
+    Series
+
+    Examples
+    --------
+    >>> import efinance as ef
+    >>> ef.stock.get_quote_snapshot('600519')
+    代码          600519
+    名称            贵州茅台
+    时间        15:59:30
+    涨跌额          -73.5
+    涨跌幅          -4.13
+    最新价         1707.0
+    昨收          1780.5
+    今开          1760.2
+    开盘          1760.2
+    最高          1768.0
+    最低          1703.8
+    均价         1726.65
+    涨停价        1958.55
+    跌停价        1602.45
+    换手率           0.39
+    成交量          49156
+    成交额     8487507456
+    卖1价         1708.0
+    卖2价        1708.75
+    卖4价         1709.6
+    卖5价        1709.63
+    买1价         1707.0
+    买2价        1706.99
+    买3价        1706.88
+    买4价        1706.87
+    买5价        1706.86
+    卖1数量           3.0
+    卖2数量           2.0
+    卖3数量          39.0
+    卖4数量           3.0
+    卖5数量           1.0
+    买1数量          17.0
+    买2数量           8.0
+    买3数量          10.0
+    买4数量           8.0
+    买5数量          21.0
+    dtype: object    
+
+    """
+
+    params = (
+        ('id', stock_code),
+        ('callback', 'jQuery183026310160411569883_1646052793441'),
+    )
+
+    response = requests.get(
+        'https://hsmarketwg.eastmoney.com/api/SHSZQuoteSnapshot',  params=params)
+    start_index = response.text.find('{')
+    end_index = response.text.rfind('}')
+    columns = {
+        'code': '代码',
+        'name': '名称',
+        'time': '时间',
+        'zd': '涨跌额',
+        'zdf': '涨跌幅',
+        'currentPrice': '最新价',
+        'yesClosePrice': '昨收',
+        'openPrice': '今开',
+        'open': '开盘',
+        'high': '最高',
+        'low': '最低',
+        'avg': '均价',
+        'topprice': '涨停价',
+        'bottomprice': '跌停价',
+        'turnover': '换手率',
+        'volume': '成交量',
+        'amount': '成交额',
+        'sale1': '卖1价',
+        'sale2': '卖2价',
+        'sale3': '卖3价',
+        'sale4': '卖4价',
+        'sale5': '卖5价',
+        'buy1': '买1价',
+        'buy2': '买2价',
+        'buy3': '买3价',
+        'buy4': '买4价',
+        'buy5': '买5价',
+        'sale1_count': '卖1数量',
+        'sale2_count': '卖2数量',
+        'sale3_count': '卖3数量',
+        'sale4_count': '卖4数量',
+        'sale5_count': '卖5数量',
+        'buy1_count': '买1数量',
+        'buy2_count': '买2数量',
+        'buy3_count': '买3数量',
+        'buy4_count': '买4数量',
+        'buy5_count': '买5数量',
+    }
+    s = pd.Series(index=columns.values(), dtype='object')
+    try:
+        qd: dict = json.loads(response.text[start_index:end_index+1])
+    except:
+        return s
+    if not qd.get('fivequote'):
+        return s
+    d = {**qd.pop('fivequote'), **qd.pop('realtimequote'), **qd}
+    s = pd.Series(d).rename(index=columns)[columns.values()]
+    str_type_list = ['代码', '名称', '时间']
+    all_type_list = columns.values()
+    for column in (set(all_type_list)-set(str_type_list)):
+        s[column] = to_type(float, str(s[column]).strip('%'), np.nan)
+
+    return s
